@@ -1,6 +1,8 @@
-### PVDM
+# PVDM
 
-Implementaton of Q.V. Le, and T. Mikolov's Paragraph Vector Distributed Memory algorithm [1]
+Implementaton of Q.V. Le, and T. Mikolov's Paragraph Vector Distributed Memory algorithm [1]. Obtain a summary vector for a document of any size for document retrieval, sentiment analysis, and other NLP tasks.
+
+### Background
 
 The idea behind PVDM is to obtain summary vectors for paragraphs, sentences, documents, etc. by using them as a crutch during a missing word task. [Word2vec](https://code.google.com/p/word2vec/)[2] offers a similar setup where a word window with an omitted central word is used to train word vectors for the other words in the window such that they predict the middle word. In this instance predicting the middle word is done using the surrouding words along with a special memory word, the paragraph vector. During training all words plus this paragraph vector are backproped to, and thus will capture some of the regression 'needs' of the task.
 
@@ -9,7 +11,6 @@ To deal with such a large prediction task (over 30k, 100k, or more words), the a
 [1] Quoc V. Le, and Tomas Mikolovn, ``Distributed Representations of Sentences and Documents ICML", 2014 [1].
 
 [2] Tomas Mikolov, Kai Chen, Greg Corrado, and Jeffrey Dean, ``Efficient Estimation of Word Representations in Vector Space. In Proceedings of Workshop at ICLR", 2013.
-
 
 ## Usage
 
