@@ -222,9 +222,6 @@ We may ask, but how sharp are these results ? i.e. is the embedding forcing thes
 
 So it's quite cooked.
 
-    plt.matshow(sk_reg.predict_proba(pvdm.synparagraph[0:20]), interpolation='nearest', cmap=plt.cm.Spectral)
-    plt.colorbar();
-
 Now it's time to throw it into the deep end with the test set (data it was not exposed to !).
 
 ### Test set
