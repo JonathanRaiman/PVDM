@@ -48,17 +48,85 @@ We can now initialize the model:
 
 As in [1] we note that it is possible to concatenate the words in the window with the paragraph vector, or to instead sum the words together and concatenate this sum with the paragraph. This is controlled via the `concatenate` parameter.
 
+
+## Training new paragraphs
+
+To evaluate this model on test data we need to be able to freeze the parameters of the model (vocabulary, regression parameters for the hierachical softmax, etc...):
+
+### Train new paragraphs:
+
+We create a special indexing scheme for the new paragraphs, along with a matrix to store their vectors:
+
+    test_trees = utils.import_tree_corpus("sentiment_data/other_data/test.txt")
+    index2paragraph_test = [tree.to_lines()[0] for tree in test_trees]
+    test_paragraph_vocab = {}
+    for line in index2paragraph_test:
+        p = Paragraph()
+        p.index = len(test_paragraph_vocab)
+        test_paragraph_vocab[line]= p
+    paragraphs = (np.random.randn(len(test_paragraph_vocab), pvdm.paragraph_size) * 1.0 / pvdm.paragraph_size) .astype(dtype=np.float32)
+
+Re-optimize the paragraph vectors for training set by passing the matrix and the indexing scheme, and preventing updates to the other parameters by passing `paragraphs_only` as True:
+
+    alpha = 0.035
+    epochs = 300
+    retraining_errors = []
+    try:
+        for epoch in range(epochs):
+            pvdm.alpha = max(0.0001, alpha * (1 - 1.0 * epoch / (epochs-1)))
+            words, error = pvdm.train(tree_corpus, paragraphs_only=True)
+            print("Epoch %d: error %.3f, alpha = %.5f" % (epoch, error, pvdm.alpha))
+            if error < 5:
+                break
+            if epoch > 0 and error > errors[-1]:
+                retraining_errors.append(error)
+            else:
+                retraining_errors.append(error)
+    except KeyboardInterrupt:
+        print("Epoch %d: error %.3f, alpha = %.5f" % (epoch, error, pvdm.alpha))
+
+    Epoch 0: error 259231.325, alpha = 0.03500
+    Epoch 1: error 149707.214, alpha = 0.03488
+    Epoch 2: error 130148.975, alpha = 0.03477
+    Epoch 3: error 120242.958, alpha = 0.03465
+    ...
+    Epoch 54: error 52776.152, alpha = 0.02868
+    Epoch 55: error 52448.319, alpha = 0.02856
+    Epoch 56: error 52331.296, alpha = 0.02844
+    Epoch 57: error 52331.296, alpha = 0.02833
+
+Optimize the paragraph vectors for test set:
+
+    alpha = 0.035
+    epochs = 300
+    test_errors = []
+    try:
+        for epoch in range(epochs):
+            pvdm.alpha = max(0.0001, alpha * (1 - 1.0 * epoch / (epochs-1)))
+            words, error = pvdm.train((sentence.split() for sentence in index2paragraph_test), paragraphs=paragraphs, vocab = test_paragraph_vocab, paragraphs_only=True)
+            print("Epoch %d: error %.3f, alpha = %.5f" % (epoch, error, pvdm.alpha))
+            if error < 1:
+                break
+            if epoch > 0 and error > errors[-1]:
+                test_errors.append(error)
+            else:
+                test_errors.append(error)
+    except KeyboardInterrupt:
+        print("Epoch %d: error %.3f, alpha = %.5f" % (epoch, error, pvdm.alpha))
+
 ## Design decisions
 
-### Which word to predict
+Several technical points in the paper provide interesting variants of the model that affect parts of the code:
+
+#### Which word to predict
 
 In the paper it was ambiguous whether the word windows predict the center word or the word at the extremity (Word2vec predicts the center word, but the language and figures in [1] indicate the end word instead). The parameter `symmetric_window` controls whether to predict the center word or not.
 
-### What window to see ? how often ?
+#### What window to see ? how often ?
 
 Next we consider the sampling strategy. Should we see each word window in a sentence even if it is longer than all the others, and thus would be trained much more than other examples ? Or should we instead sample each window from each example equally ? Again we leave it up to the user to decide which behavior to choose with the paramer `random_window`.
 
-### Should the word predict itself ?
+#### Should the word predict itself ?
 
 Ultimately we are not looking to build another Word2vec, so should we allow the predicted word to predict itself, since we are only looking to train paragraph vectors (if we *did* care about the words then letting the target word predict itself may lead to a degenerate solution). This behavior is controlled by the parameter `self_predict`. We recommend to set this to False.
 
@@ -224,7 +292,7 @@ So it's quite cooked.
 
 Now it's time to throw it into the deep end with the test set (data it was not exposed to !).
 
-### Test set
+#### Test set
 
 Get the labels in a list:
 
@@ -304,66 +372,4 @@ Now look for neighboring paragraphs, note that "bad" here is treated as the para
     bad boy weirdo role - 0.79
     prediction 2 vs actual 2
 
-## Training new paragraphs
-
-To evaluate this model on test data we need to be able to freeze the parameters of the model (vocabulary, regression parameters for the hierachical softmax, etc...):
-
-### Train new paragraphs:
-
-    test_trees = utils.import_tree_corpus("sentiment_data/other_data/test.txt")
-    index2paragraph_test = [tree.to_lines()[0] for tree in test_trees]
-    test_paragraph_vocab = {}
-    for line in index2paragraph_test:
-        p = Paragraph()
-        p.index = len(test_paragraph_vocab)
-        test_paragraph_vocab[line]= p
-    paragraphs = (np.random.randn(len(test_paragraph_vocab), pvdm.paragraph_size) * 1.0 / pvdm.paragraph_size) .astype(dtype=np.float32)
-
-Re-optimize the paragraph vectors for training set:
-
-    alpha = 0.035
-    epochs = 300
-    retraining_errors = []
-    try:
-        for epoch in range(epochs):
-            pvdm.alpha = max(0.0001, alpha * (1 - 1.0 * epoch / (epochs-1)))
-            words, error = pvdm.train(tree_corpus, paragraphs_only=True)
-            print("Epoch %d: error %.3f, alpha = %.5f" % (epoch, error, pvdm.alpha))
-            if error < 5:
-                break
-            if epoch > 0 and error > errors[-1]:
-                retraining_errors.append(error)
-            else:
-                retraining_errors.append(error)
-    except KeyboardInterrupt:
-        print("Epoch %d: error %.3f, alpha = %.5f" % (epoch, error, pvdm.alpha))
-
-    Epoch 0: error 259231.325, alpha = 0.03500
-    Epoch 1: error 149707.214, alpha = 0.03488
-    Epoch 2: error 130148.975, alpha = 0.03477
-    Epoch 3: error 120242.958, alpha = 0.03465
-    ...
-    Epoch 54: error 52776.152, alpha = 0.02868
-    Epoch 55: error 52448.319, alpha = 0.02856
-    Epoch 56: error 52331.296, alpha = 0.02844
-    Epoch 57: error 52331.296, alpha = 0.02833
-
-Optimize the paragraph vectors for test set:
-
-
-    alpha = 0.035
-    epochs = 300
-    test_errors = []
-    try:
-        for epoch in range(epochs):
-            pvdm.alpha = max(0.0001, alpha * (1 - 1.0 * epoch / (epochs-1)))
-            words, error = pvdm.train((sentence.split() for sentence in index2paragraph_test), paragraphs=paragraphs, vocab = test_paragraph_vocab, paragraphs_only=True)
-            print("Epoch %d: error %.3f, alpha = %.5f" % (epoch, error, pvdm.alpha))
-            if error < 1:
-                break
-            if epoch > 0 and error > errors[-1]:
-                test_errors.append(error)
-            else:
-                test_errors.append(error)
-    except KeyboardInterrupt:
-        print("Epoch %d: error %.3f, alpha = %.5f" % (epoch, error, pvdm.alpha))
+Here we note that many of the returned paragraphs are very relevant to our query, and thus, at least in this small example, we can see that this technique can be very useful for optaining proximity of two phrases (paraphrasing for instance).
