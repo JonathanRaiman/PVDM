@@ -213,7 +213,6 @@ cdef void fast_sentence_sg_pvdm_batch_concatenation_self_predict(
             # (that has size = training window)
             saxpy(&word_size, &ONEF, word_work, &ONE, &syn0[indexes[batch][i] * word_size], &ONE)
 
-
 cdef void fast_sentence_sg_pvdm_batch_concatenation_rand_window(
     const np.uint32_t * points[MAX_BATCH_SIZE][MAX_SENTENCE_LEN], \
     const np.uint8_t *  codes[MAX_BATCH_SIZE][MAX_SENTENCE_LEN], \
