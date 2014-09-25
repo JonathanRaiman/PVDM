@@ -1,26 +1,74 @@
-### 
+### PVDM
+
+Implementaton of Q.V. Le, and T. Mikolov's Paragraph Vector Distributed Memory algorithm [1]
+
+The idea behind PVDM is to obtain summary vectors for paragraphs, sentences, documents, etc. by using them as a crutch during a missing word task. [Word2vec](https://code.google.com/p/word2vec/)[2] offers a similar setup where a word window with an omitted central word is used to train word vectors for the other words in the window such that they predict the middle word. In this instance predicting the middle word is done using the surrouding words along with a special memory word, the paragraph vector. During training all words plus this paragraph vector are backproped to, and thus will capture some of the regression 'needs' of the task.
+
+To deal with such a large prediction task (over 30k, 100k, or more words), the authors use clever sparse schemes. **Hierachical Softmax** for instance, is a method that records the position of the words in a tree (in this case a Huffman tree built using their occurences in the training data, or in some large corpus) and uses their corresponding Huffman binary codes for regression. The codes are used as follows: by only calling the columns of a giant matrix that corresponds to each branching point in the tree, it is possible to train the neighbor words to force the neural net to activate in such a way to reproduce this code, which in turns would mean taking all the correct turns as we travel down the tree to the target word. An excellent overview of this technique is given [here](http://nbviewer.ipython.org/github/dolaameng/tutorials/blob/master/word2vec-abc/poc/pyword2vec_anatomy.ipynb).
+
+[1] Quoc V. Le, and Tomas Mikolovn, ``Distributed Representations of Sentences and Documents ICML", 2014 [1].
+
+[2] Tomas Mikolov, Kai Chen, Greg Corrado, and Jeffrey Dean, ``Efficient Estimation of Word Representations in Vector Space. In Proceedings of Workshop at ICLR", 2013.
 
 
-    from matplotlib import pyplot as plt
-    from tsne import bh_sne
-    from utils import LogisticRegression
-    from sklearn.linear_model import LogisticRegression as skLogisticRegression
-    from sklearn.metrics import classification_report
-    from gensim import matutils
-    import numpy as np, utils
-    from pvdm import PVDM
+## Usage
+
+This code is based off [gensim](https://github.com/piskvorky/gensim/)'s word2vec code, and thus ressembles its implementation.
+
+We start off by loading the library:
+
     from word2vec_extended import LineCorpus
     from pvdm import PVDM, Paragraph
-    from gensim.models.word2vec import Text8Corpus, logger
+
+The `LineCorpus` is a wrapper around a reader for a text file with a new sentence on each line:
+
+
     trees = utils.import_tree_corpus("sentiment_data/other_data/train.txt")
     labels_hash = trees.labels()
     tree_export_path = "sentiment_data/all_lines.txt"
+
     tree_corpus = LineCorpus(tree_export_path, filter_lines = False)
-    #tree_corpus = [tree.to_lines()[0].split() for tree in trees]
-    pvdm = PVDM(concatenate = True, random_window = True, workers = 8, window = 8, batchsize = 1000, paragraph_size=400, decay = False, size = 400, alpha=0.035, symmetric_window=False, self_predict= False)
-    pvdm.build_vocab(sentences= tree_corpus, oov_word = True)
+    # filter lines removes lines with crazy non alphanumerical characters
+
+We can now initialize the model:
+
+    pvdm = PVDM(
+        concatenate = True,
+        random_window = True,
+        workers = 8,
+        window = 8,
+        batchsize = 1000,
+        paragraph_size=400,
+        decay = False,
+        size = 400,
+        alpha=0.035,
+        symmetric_window =False,
+        self_predict = False)
+
+As in [1] we note that it is possible to concatenate the words in the window with the paragraph vector, or to instead sum the words together and concatenate this sum with the paragraph. This is controlled via the `concatenate` parameter.
+
+## Design decisions
+
+### Which word to predict
+
+In the paper it was ambiguous whether the word windows predict the center word or the word at the extremity (Word2vec predicts the center word, but the language and figures in [1] indicate the end word instead). The parameter `symmetric_window` controls whether to predict the center word or not.
+
+### What window to see ? how often ?
+
+Next we consider the sampling strategy. Should we see each word window in a sentence even if it is longer than all the others, and thus would be trained much more than other examples ? Or should we instead sample each window from each example equally ? Again we leave it up to the user to decide which behavior to choose with the paramer `random_window`.
+
+### Should the word predict itself ?
+
+Ultimately we are not looking to build another Word2vec, so should we allow the predicted word to predict itself, since we are only looking to train paragraph vectors (if we *did* care about the words then letting the target word predict itself may lead to a degenerate solution). This behavior is controlled by the parameter `self_predict`. We recommend to set this to False.
 
 
+## Example usage
+
+To get the system working provide it with a vocabulary source:
+
+    pvdm.build_vocab(sentences = tree_corpus, oov_word = True)
+
+Then train it:
 
     alpha = 0.035
     epochs = 130
@@ -52,39 +100,31 @@
     Epoch 129: error 1215409.188, alpha = 0.00010
 
 
-
-    #if in a self_predict mode
-    pvdm.reintroduce_multi_word_windows()
-
-    plt.plot(errors)
-    plt.title("PV-DM: Bytes missed per training epoch"); plt.xlabel("training epoch"); plt.ylabel("Number of bytes");
-
+We find that the error drops rapidly, and then re-increases (this is probably due to the randomness of the sampling strategy, and the batch size):
 
 ![png](README_images/PV-DM%20-%20Batch%20Learning_5_0.png)
 
 
+## Data exploration
 
-    # use this to verify work arrays are being written to
-    jobs = (pvdm.create_job(sentence) for sentence in tree_corpus)
-    paragraph_work = np.zeros(pvdm.paragraph_size, dtype=np.float32)  # each thread must have its own work memory
-    word_work = np.zeros((pvdm.logistic_regression_size - pvdm.paragraph_size), dtype= np.float32)
-    neu1 = matutils.zeros_aligned(pvdm.logistic_regression_size, dtype=np.float32)
-    error = np.zeros(1, dtype = np.float32)
-    job = [next(jobs)]
+We can now ask ourselves how the paragraphs are embedded:
 
 ### 2D projections of Paragraphs
 
+Using T-SNE to get 2D projection of paragraphs:
+    
+    # the trees variable is a special array of tree-like objects
+    # that capture the structure of the Stanford Sentiment Treebank
+    # dataset, to simply get the full sentences we grab the largest
+    # chunk of each tree:
 
     full_lines = [tree.to_lines()[0] for tree in trees]
 
-#### Using T-SNE to get 2D projection of paragraphs
-
-
+    # convert these to indices from the matrices in the PVDM:
     para_indices = [pvdm.paragraph_vocab[line].index for line in full_lines]
+
+    # throws those into bh_sne, a T-SNE library for python:
     X_2dpara = bh_sne(pvdm.synparagraph[para_indices].astype('float64'))
-
-#### Visualize the projections
-
 
     min_visible = 10
     max_visible = 50
@@ -100,114 +140,18 @@
             bbox = None,
             arrowprops = None)#dict(arrowstyle = '->', connectionstyle = 'arc3,rad=0'))
 
-
 ![png](README_images/PV-DM%20-%20Batch%20Learning_12_0.png)
 
 
-Synparagraph using asymmetric window:
+## Sentiment Analysis
 
-
-    startpoint = 4571
-    plt.matshow(pvdm.synparagraph[startpoint:startpoint+1000, 0:400])
-    plt.colorbar()
-
-
-
-
-    <matplotlib.colorbar.Colorbar at 0x138e7e190>
-
-
-
-
-![png](README_images/PV-DM%20-%20Batch%20Learning_14_1.png)
-
-
-
-    startpoint = 4571
-    plt.matshow(pvdm.synparagraph[startpoint:startpoint+1000, 0:400])
-    plt.colorbar()
-
-
-
-
-    <matplotlib.colorbar.Colorbar at 0x116339a50>
-
-
-
-
-![png](README_images/PV-DM%20-%20Batch%20Learning_15_1.png)
-
-
-Synparagraph using symmetric window:
-
-
-    startpoint = 4571
-    plt.matshow(pvdm.synparagraph[startpoint:startpoint+1000, 0:400])
-    plt.colorbar()
-
-
-
-
-    <matplotlib.colorbar.Colorbar at 0x13b53f7d0>
-
-
-
-
-![png](README_images/PV-DM%20-%20Batch%20Learning_17_1.png)
-
-
-
-    startpoint = 4671
-    plt.matshow(pvdm.syn1[startpoint:startpoint+500, :400])
-    plt.colorbar()
-    plt.xlabel("Softmax Parameters")
-    plt.ylabel("Tree branch index");
-
-
-![png](README_images/PV-DM%20-%20Batch%20Learning_18_0.png)
-
-
-After 30 several iterations we get:
-
-
-    startpoint = 4671
-    plt.matshow(pvdm.syn1[startpoint:startpoint+500, :400])
-    plt.colorbar()
-    plt.xlabel("Softmax Parameters")
-    plt.ylabel("Tree branch index")
-
-
-
-
-    <matplotlib.text.Text at 0x137534e10>
-
-
-
-
-![png](README_images/PV-DM%20-%20Batch%20Learning_20_1.png)
-
-
-After 60 several iterations we get:
-
-
-    startpoint = 4671
-    plt.matshow(pvdm.syn1[startpoint:startpoint+500, :400])
-    plt.colorbar()
-    plt.xlabel("Softmax Parameters")
-    plt.ylabel("Tree branch index");
-
-
-![png](README_images/PV-DM%20-%20Batch%20Learning_22_0.png)
-
-
-# Sentiment Analysis
-
-## Obtain labeled dataset
-
+One of the goals of this implementation was to reproduce the results in [1] concerning sentiment analysis tasks over the Stanford Sentiment Treebank. To do this we need to import the test dataset, train a classifier, and benchmark:
 
     labels = [labels_hash[label] for label in pvdm.index2paragraph]
 
-## Train classifiers
+### Train classifier
+
+Here we have multiple options. We can construct a simple regressor ourselves, or use an off-the-shelf one from Sk-learn (The logistic regressor we built is not provided yet with this package).
 
 Custom Logistic Regression classifier:
 
@@ -233,10 +177,9 @@ Sk-learn Logistic Regression classifier: (too slow for full dataset)
     #sk_reg = skLogisticRegression(tol=0.0000001)
     #sk_reg.fit(pvdm.synparagraph[para_indices], labels);
 
-## Sentiment Classification Reports
+### Benchmarks
 
-### Classification report for Sk-Learn Logistic Regression
-
+Classification report for custom Logistic Regressor:
 
     print(classification_report(labels, reg.predict(pvdm.synparagraph), labels=[0,1,2,3,4], target_names=["--", "-", "", "+", "++"]))
 
@@ -249,9 +192,8 @@ Sk-learn Logistic Regression classifier: (too slow for full dataset)
              ++       0.21      0.01      0.01      9321
     
     avg / total       0.40      0.51      0.37    159271
-    
 
-
+Classification report for Sk-Learn Logistic Regression:
 
     print(classification_report(labels, sk_reg.predict(pvdm.synparagraph), labels=[0,1,2,3,4], target_names=["--", "-", "", "+", "++"]))
 
@@ -265,27 +207,11 @@ Sk-learn Logistic Regression classifier: (too slow for full dataset)
     
     avg / total       0.33      0.32      0.27      8544
     
+There appears to be an issue with overfitting in the Sk-learn version which we tried to avert with some early stopping / etc.. Nothing too fancy, but some cooking happens here. As we can see we get about 51% recall over all phrases (sentences and sub-sentences [phrases and words]).
 
+### Visualizing the predictions
 
-### Classification report for custom Logistic Regression
-
-
-    print(classification_report(labels, reg.predict(pvdm.synparagraph), labels=[0,1,2,3,4], target_names=["--", "-", "", "+", "++"]))
-
-                 precision    recall  f1-score   support
-    
-             --       0.00      0.00      0.00      7237
-              -       0.21      0.00      0.00     27714
-                      0.51      0.99      0.68     81638
-              +       0.31      0.01      0.02     33361
-             ++       0.10      0.00      0.00      9321
-    
-    avg / total       0.37      0.51      0.35    159271
-    
-
-
-## Visualize the prediction confusion
-
+We may ask, but how sharp are these results ? i.e. is the embedding forcing these hyperplanes to exist for classification, or can we throw it back in the oven for a few more hours and crank some more goodness ? Well see for yourselves:
 
     plt.matshow(reg.predict_proba(pvdm.synparagraph[20:60]), interpolation='nearest', cmap=plt.cm.Spectral)
     plt.colorbar();
@@ -293,54 +219,43 @@ Sk-learn Logistic Regression classifier: (too slow for full dataset)
 
 ![png](README_images/PV-DM%20-%20Batch%20Learning_39_0.png)
 
-
+So it's quite cooked.
 
     plt.matshow(sk_reg.predict_proba(pvdm.synparagraph[0:20]), interpolation='nearest', cmap=plt.cm.Spectral)
     plt.colorbar();
 
-## Compare labelings:
+Now it's time to throw it into the deep end with the test set (data it was not exposed to !).
 
+### Test set
 
-    list(reg.predict(pvdm.synparagraph[0:20]))
+Get the labels in a list:
 
+    test_labels_hash = test_trees.labels()
+    test_labels = [test_labels_hash[sentence] for sentence in index2paragraph_test]
 
+Get performance on the test set:
 
+    print(classification_report(test_labels, reg.predict(paragraphs), labels=[0,1,2,3,4], target_names=["--", "-", "", "+", "++"]))
 
-    [2, 2, 4, 2, 2, 2, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+                 precision    recall  f1-score   support
+    
+             --       0.00      0.00      0.00       279
+              -       0.00      0.00      0.00       633
+                      0.18      1.00      0.30       389
+              +       0.00      0.00      0.00       510
+             ++       0.00      0.00      0.00       399
+    
+    avg / total       0.03      0.18      0.05      2210
 
-
-
-
-    labels[0:20]
-
-
-
-
-    [3, 2, 2, 2, 4, 3, 2, 4, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2]
-
-
-
-## Get number of correct predictions
-
-
-    np.equal(reg.predict(pvdm.synparagraph), np.array(labels)).sum()
-
-
-
-
-    81438
-
-
+The results are not as good as on the training set, expectedly, but not where we'd like them to be to reproduce [1]. Let us first note that there are only 2210 examples here, and all are full sentences. The other questions you may ask are, but were the vectors well trained ? etc... those are all good open questions, and they may help explain the discrepancy. Let's now focus on what works well here.
 
 ## Qualitative Test
 
-### Search for nearest paragraph
+The embeddings capture useful information. One way of verifying that this process works is to find the nearest Eucledian neighbors for these guys.
 
+First look for neighboring words (just as in Word2vec):
 
     pvdm.most_similar("darkness")
-
-
-
 
     [('lameness', 0.7936276793479919),
      ('anti-virus', 0.7769980430603027),
@@ -353,8 +268,7 @@ Sk-learn Logistic Regression classifier: (too slow for full dataset)
      ('witch', 0.7355045080184937),
      ('owed', 0.7308557033538818)]
 
-
-
+Now look for neighboring paragraphs, note that "bad" here is treated as the paragraph "bad" which thus has a distinct vector from the word vector for "bad":
 
     for label, score in pvdm.most_similar_paragraph("bad"):
         print("%s - %.2f" % (label, score))
@@ -391,11 +305,12 @@ Sk-learn Logistic Regression classifier: (too slow for full dataset)
     
     bad boy weirdo role - 0.79
     prediction 2 vs actual 2
-    
 
+## Training new paragraphs
 
-## Train new paragraphs:
+To evaluate this model on test data we need to be able to freeze the parameters of the model (vocabulary, regression parameters for the hierachical softmax, etc...):
 
+### Train new paragraphs:
 
     test_trees = utils.import_tree_corpus("sentiment_data/other_data/test.txt")
     index2paragraph_test = [tree.to_lines()[0] for tree in test_trees]
@@ -407,7 +322,6 @@ Sk-learn Logistic Regression classifier: (too slow for full dataset)
     paragraphs = (np.random.randn(len(test_paragraph_vocab), pvdm.paragraph_size) * 1.0 / pvdm.paragraph_size) .astype(dtype=np.float32)
 
 Re-optimize the paragraph vectors for training set:
-
 
     alpha = 0.035
     epochs = 300
@@ -430,61 +344,11 @@ Re-optimize the paragraph vectors for training set:
     Epoch 1: error 149707.214, alpha = 0.03488
     Epoch 2: error 130148.975, alpha = 0.03477
     Epoch 3: error 120242.958, alpha = 0.03465
-    Epoch 4: error 112540.050, alpha = 0.03453
-    Epoch 5: error 106864.066, alpha = 0.03441
-    Epoch 6: error 102336.388, alpha = 0.03430
-    Epoch 7: error 97998.764, alpha = 0.03418
-    Epoch 8: error 94581.684, alpha = 0.03406
-    Epoch 9: error 91675.288, alpha = 0.03395
-    Epoch 10: error 89042.732, alpha = 0.03383
-    Epoch 11: error 86743.940, alpha = 0.03371
-    Epoch 12: error 84517.127, alpha = 0.03360
-    Epoch 13: error 82460.414, alpha = 0.03348
-    Epoch 14: error 80741.940, alpha = 0.03336
-    Epoch 15: error 78925.016, alpha = 0.03324
-    Epoch 16: error 77322.676, alpha = 0.03313
-    Epoch 17: error 75869.703, alpha = 0.03301
-    Epoch 18: error 74986.107, alpha = 0.03289
-    Epoch 19: error 73676.221, alpha = 0.03278
-    Epoch 20: error 72832.079, alpha = 0.03266
-    Epoch 21: error 71578.128, alpha = 0.03254
-    Epoch 22: error 70666.796, alpha = 0.03242
-    Epoch 23: error 69673.525, alpha = 0.03231
-    Epoch 24: error 68817.370, alpha = 0.03219
-    Epoch 25: error 67810.122, alpha = 0.03207
-    Epoch 26: error 66824.629, alpha = 0.03196
-    Epoch 27: error 66165.420, alpha = 0.03184
-    Epoch 28: error 65661.027, alpha = 0.03172
-    Epoch 29: error 64943.431, alpha = 0.03161
-    Epoch 30: error 64184.818, alpha = 0.03149
-    Epoch 31: error 63450.960, alpha = 0.03137
-    Epoch 32: error 63108.457, alpha = 0.03125
-    Epoch 33: error 62177.836, alpha = 0.03114
-    Epoch 34: error 61536.736, alpha = 0.03102
-    Epoch 35: error 60795.149, alpha = 0.03090
-    Epoch 36: error 60539.906, alpha = 0.03079
-    Epoch 37: error 59747.664, alpha = 0.03067
-    Epoch 38: error 59215.436, alpha = 0.03055
-    Epoch 39: error 58835.278, alpha = 0.03043
-    Epoch 40: error 58226.320, alpha = 0.03032
-    Epoch 41: error 57989.265, alpha = 0.03020
-    Epoch 42: error 57424.890, alpha = 0.03008
-    Epoch 43: error 56962.105, alpha = 0.02997
-    Epoch 44: error 56643.652, alpha = 0.02985
-    Epoch 45: error 56341.595, alpha = 0.02973
-    Epoch 46: error 55751.704, alpha = 0.02962
-    Epoch 47: error 55332.606, alpha = 0.02950
-    Epoch 48: error 54969.649, alpha = 0.02938
-    Epoch 49: error 54552.120, alpha = 0.02926
-    Epoch 50: error 54065.863, alpha = 0.02915
-    Epoch 51: error 53968.124, alpha = 0.02903
-    Epoch 52: error 53656.225, alpha = 0.02891
-    Epoch 53: error 53125.347, alpha = 0.02880
+    ...
     Epoch 54: error 52776.152, alpha = 0.02868
     Epoch 55: error 52448.319, alpha = 0.02856
     Epoch 56: error 52331.296, alpha = 0.02844
     Epoch 57: error 52331.296, alpha = 0.02833
-
 
 Optimize the paragraph vectors for test set:
 
@@ -505,35 +369,3 @@ Optimize the paragraph vectors for test set:
                 test_errors.append(error)
     except KeyboardInterrupt:
         print("Epoch %d: error %.3f, alpha = %.5f" % (epoch, error, pvdm.alpha))
-
-### Evaluate sentiment on test set
-
-Get the labels in a list:
-
-
-    test_labels_hash = test_trees.labels()
-    test_labels = [test_labels_hash[sentence] for sentence in index2paragraph_test]
-
-Get performance on the test set:
-
-
-    print(classification_report(test_labels, reg.predict(paragraphs), labels=[0,1,2,3,4], target_names=["--", "-", "", "+", "++"]))
-
-                 precision    recall  f1-score   support
-    
-             --       0.00      0.00      0.00       279
-              -       0.00      0.00      0.00       633
-                      0.18      1.00      0.30       389
-              +       0.00      0.00      0.00       510
-             ++       0.00      0.00      0.00       399
-    
-    avg / total       0.03      0.18      0.05      2210
-    
-
-
-TODO:
-
-* Check how model does with Children's books
-
-
-    
