@@ -8,7 +8,7 @@ The idea behind PVDM is to obtain summary vectors for paragraphs, sentences, doc
 
 To deal with such a large prediction task (over 30k, 100k, or more words), the authors use clever sparse schemes. **Hierachical Softmax** for instance, is a method that records the position of the words in a tree (in this case a Huffman tree built using their occurences in the training data, or in some large corpus) and uses their corresponding Huffman binary codes for regression. The codes are used as follows: by only calling the columns of a giant matrix that corresponds to each branching point in the tree, it is possible to train the neighbor words to force the neural net to activate in such a way to reproduce this code, which in turns would mean taking all the correct turns as we travel down the tree to the target word. An excellent overview of this technique is given [here](http://nbviewer.ipython.org/github/dolaameng/tutorials/blob/master/word2vec-abc/poc/pyword2vec_anatomy.ipynb).
 
-[1] Quoc V. Le, and Tomas Mikolovn, ``Distributed Representations of Sentences and Documents ICML", 2014 [1].
+[1] Quoc V. Le, and Tomas Mikolov, ``Distributed Representations of Sentences and Documents ICML", 2014 [1].
 
 [2] Tomas Mikolov, Kai Chen, Greg Corrado, and Jeffrey Dean, ``Efficient Estimation of Word Representations in Vector Space. In Proceedings of Workshop at ICLR", 2013.
 
